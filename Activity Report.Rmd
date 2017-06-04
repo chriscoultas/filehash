@@ -1,0 +1,132 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+Summary step data over the course of 2 months
+================================================
+```{r "setup", include=FALSE}
+require("knitr")
+```
+
+###Packaging and data download
+Before analysis, download key packages.
+
+* Pacman expedites the downloading and installing packages process
+
+* Plyr and dplyr are helpful in analyzing data frames
+
+* Downloader expedites the downloading and unzipping data process
+
+* Lubridate makes processing dates easier
+
+* ggplot2 enables the creation of nicely formatted graphs
+
+* gridExtra simplifies the development of panel plotting in ggplot
+
+Then, download the data!
+
+```{r echo=TRUE}
+if (!require("pacman")) install.packages("pacman")
+p_load(plyr, dplyr, downloader, lubridate, ggplot2, gridExtra)
+
+library(xtable)
+options(xtable.floating = FALSE)
+options(xtable.timestamp = "")
+
+download("http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip", dest="./Activity monitoring data.zip", mode="wb")
+unzip("Activity monitoring data.zip")
+```
+
+###Initial data processing
+The data comes in .csv format and needs very little processing for the first few questions.  The first few questions do involve summary statistics (i.e., sum, mean, median), so the code below will create a dataset that contains these summary statistics grouped by day.
+
+```{r echo=TRUE}
+df <- read.csv("activity.csv", header=TRUE)
+sumstep_day <- aggregate(steps ~ date, df, FUN=sum, drop=FALSE)
+meanstep_day <- aggregate(steps ~ date, df, FUN=mean, drop=FALSE)
+medstep_day <- aggregate(steps ~ date, df, FUN=median, drop=FALSE)
+summarystep_day <- sumstep_day %>% merge(meanstep_day, by="date") %>%
+  merge(medstep_day,by="date")
+names(summarystep_day) <- c("date","sumstep","meanstep","medstep")
+```
+
+###QUESTION 1: What are the total number of steps taken each day?
+Using the summary data frames created above, the script below creates quick histogram that demonstrates total steps across the different days in the dataset.
+
+```{r echo=TRUE}
+
+ggplot(data=summarystep_day,aes(x=date,y=sumstep))+ geom_histogram(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 55, hjust = 1))
+
+```
+
+###QUESTION 2: What are the mean and median number of steps taken each day?
+The table below illustrates the mean and median number of steps taken each day.
+
+```{r echo=TRUE}
+kable(summarystep_day)
+```
+
+###QUESTION 3: How many steps are typically taken in different 5-minute intervals over the course of a normal day? 
+For the next chunk, I go back to the original data frame and aggregate using a mean function, by the 5-minute intervals.  Then, I use ggplot to create a time-series line plot that tracks average steps over the course of a typical day.
+
+```{r echo=TRUE}
+meanstep_int <- aggregate(steps ~ interval, df, FUN=mean, drop=FALSE)
+maxstep_int <- aggregate(steps ~ interval, df, FUN=max, drop=FALSE)
+summarystep_int <- meanstep_int %>% merge(maxstep_int,by="interval", drop=FALSE)
+names(summarystep_int) <- c("interval","meanstep","maxstep")
+
+ggplot(data=summarystep_int, aes(x=interval,y=meanstep)) + geom_line()
+```
+
+###QUESTION 4: Which 5-minute interval,on average, contains the maximum number of steps?
+Though this question can loosely be answered by referring to the graph above, I answer this question more directly with the table below.
+
+```{r echo=TRUE}
+tmp <- arrange(summarystep_int,desc(meanstep))[1:6,1:2]
+kable(tmp)
+
+```
+
+##Impute missing data
+In this code chunk I replace missing data with the mean from a given interval.  This is assumed to be more appropriate than the mean for an entire day because steps vary significantly less on a per-interval basis than they do across an entire day.
+
+```{r echo=TRUE}
+impute.mean <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
+df_impute <- ddply(df, ~ interval, transform, steps = impute.mean(steps))
+```
+
+###QUESTION 5: After imputing missing values, how many steps are taken each day?
+Having imputed the missing data, now let's run the total steps per day data again, creating an "imputed data" data frame.  Using this data frame, I will then run a histogram in ggplot.
+
+```{r echo=TRUE}
+
+sumstep_day_imp <- aggregate(steps ~ date, df_impute, FUN=sum, drop=FALSE)
+names(sumstep_day_imp) <- c("date", "sumstep")
+
+ggplot(data=sumstep_day_imp,aes(x=date,y=sumstep))+ 
+  geom_histogram(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 55, hjust = 1))
+```
+
+###QUESTION 6: How does the average number of steps per 5-minute interval change across weekdays vs. weekends? 
+To address this question, I will filter the above data set, breaking it down into a weekend and a weekday dataset.  From there, I will calculate two line graphs and use gridExtra to plot them in a panel format.
+
+```{r echo=TRUE}
+
+meanstep_day_imp <- mutate(df_impute,day=wday(date,label=TRUE))
+
+meanstep_day_imp_wkend <- filter(meanstep_day_imp,day=="Sat" | day=="Sun")
+meanstep_day_imp_wkend <- aggregate(steps ~ interval, meanstep_day_imp_wkend, FUN=mean, drop=FALSE)
+
+meanstep_day_imp_wkday <- filter(meanstep_day_imp,day=="Mon" | day=="Tues" | 
+                                   day=="Wed" | day=="Thurs" | day=="Fri")
+meanstep_day_imp_wkday <- aggregate(steps ~ interval, meanstep_day_imp_wkday, FUN=mean, drop=FALSE)
+
+p1 <- ggplot(meanstep_day_imp_wkend, aes(x=interval, y=steps)) + geom_line() + ggtitle("Mean Weekend Steps") + ylim(0,250)
+p2 <- ggplot(meanstep_day_imp_wkday, aes(x=interval,y=steps)) + geom_line() + ggtitle("Mean Weekday Steps") + ylim(0,250)
+
+grid.arrange(p1, p2, ncol=2)
+```
+
